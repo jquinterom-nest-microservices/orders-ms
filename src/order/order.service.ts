@@ -1,12 +1,37 @@
-import { HttpStatus, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+import {
+  HttpStatus,
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleInit,
+} from '@nestjs/common';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { PrismaClient } from 'generated/prisma';
-import { RpcException } from '@nestjs/microservices';
+import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { ChangeOrderStatusDto, OrderPaginationDto } from './dto';
+import { PRODUCTS_SERVICE } from 'src/config';
+import { catchError, firstValueFrom } from 'rxjs';
+
+interface ProductFromDb {
+  id: number;
+  name: string;
+  price: number;
+}
 
 @Injectable()
 export class OrderService extends PrismaClient implements OnModuleInit {
   private readonly logger = new Logger(OrderService.name);
+
+  constructor(
+    @Inject(PRODUCTS_SERVICE)
+    private readonly productsClient: ClientProxy,
+  ) {
+    super();
+  }
 
   async onModuleInit() {
     await this.$connect();
@@ -14,11 +39,69 @@ export class OrderService extends PrismaClient implements OnModuleInit {
   }
 
   async create(createOrderDto: CreateOrderDto) {
-    await this.order.create({
-      data: createOrderDto,
-    });
+    const productIds = createOrderDto.items.map((item) => item.productId);
 
-    return createOrderDto;
+    try {
+      const products: ProductFromDb[] = await firstValueFrom(
+        this.productsClient.send({ cmd: 'validate_products' }, productIds).pipe(
+          catchError((error) => {
+            throw new RpcException(error as string | object);
+          }),
+        ),
+      );
+
+      const totalAmount = createOrderDto.items.reduce((acc, orderItem) => {
+        const product = products.find(
+          (product) => product.id === orderItem.productId,
+        );
+        const price = product?.price ?? 0;
+        return price * orderItem.quantity;
+      }, 0);
+
+      const totalItems = createOrderDto.items.reduce(
+        (acc, orderItem) => acc + orderItem.quantity,
+        0,
+      );
+
+      const order = await this.order.create({
+        data: {
+          totalAmount,
+          totalItems,
+          OrderItem: {
+            createMany: {
+              data: createOrderDto.items.map((orderItem) => ({
+                productId: orderItem.productId,
+                quantity: orderItem.quantity,
+                price:
+                  products.find((product) => product.id === orderItem.productId)
+                    ?.price ?? 0,
+              })),
+            },
+          },
+        },
+        include: {
+          OrderItem: {
+            select: {
+              price: true,
+              quantity: true,
+              productId: true,
+            },
+          },
+        },
+      });
+
+      return {
+        ...order,
+        OrderItem: order.OrderItem.map((orderItem) => ({
+          ...orderItem,
+          name:
+            products.find((product) => product.id === orderItem.productId)
+              ?.name ?? '',
+        })),
+      };
+    } catch (error) {
+      throw new RpcException(error as object | string);
+    }
   }
 
   async findAll(paginationDto: OrderPaginationDto) {
@@ -53,6 +136,15 @@ export class OrderService extends PrismaClient implements OnModuleInit {
       where: {
         id,
       },
+      include: {
+        OrderItem: {
+          select: {
+            price: true,
+            quantity: true,
+            productId: true,
+          },
+        },
+      },
     });
 
     if (!order) {
@@ -62,7 +154,21 @@ export class OrderService extends PrismaClient implements OnModuleInit {
       });
     }
 
-    return order;
+    const productIds = order.OrderItem.map((orderItem) => orderItem.productId);
+
+    const products: ProductFromDb[] = await firstValueFrom(
+      this.productsClient.send({ cmd: 'validate_products' }, productIds),
+    );
+
+    return {
+      ...order,
+      OrderItem: order.OrderItem.map((orderItem) => ({
+        ...orderItem,
+        name:
+          products.find((product) => product.id === orderItem.productId)
+            ?.name ?? '',
+      })),
+    };
   }
 
   async changeOrderStatus(changeOrderStatusDto: ChangeOrderStatusDto) {
