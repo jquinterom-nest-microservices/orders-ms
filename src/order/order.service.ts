@@ -1,6 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-return */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   HttpStatus,
@@ -13,7 +10,7 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { PrismaClient } from 'generated/prisma';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { ChangeOrderStatusDto, OrderPaginationDto } from './dto';
-import { PRODUCTS_SERVICE } from 'src/config';
+import { NATS_SERVICE } from 'src/config';
 import { catchError, firstValueFrom } from 'rxjs';
 
 interface ProductFromDb {
@@ -27,8 +24,8 @@ export class OrderService extends PrismaClient implements OnModuleInit {
   private readonly logger = new Logger(OrderService.name);
 
   constructor(
-    @Inject(PRODUCTS_SERVICE)
-    private readonly productsClient: ClientProxy,
+    @Inject(NATS_SERVICE)
+    private readonly client: ClientProxy,
   ) {
     super();
   }
@@ -43,7 +40,7 @@ export class OrderService extends PrismaClient implements OnModuleInit {
 
     try {
       const products: ProductFromDb[] = await firstValueFrom(
-        this.productsClient.send({ cmd: 'validate_products' }, productIds).pipe(
+        this.client.send({ cmd: 'validate_products' }, productIds).pipe(
           catchError((error) => {
             throw new RpcException(error as string | object);
           }),
@@ -157,7 +154,7 @@ export class OrderService extends PrismaClient implements OnModuleInit {
     const productIds = order.OrderItem.map((orderItem) => orderItem.productId);
 
     const products: ProductFromDb[] = await firstValueFrom(
-      this.productsClient.send({ cmd: 'validate_products' }, productIds),
+      this.client.send({ cmd: 'validate_products' }, productIds),
     );
 
     return {
