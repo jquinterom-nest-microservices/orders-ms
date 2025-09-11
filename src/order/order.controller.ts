@@ -1,16 +1,23 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { Controller, ParseUUIDPipe } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
 import { OrderService } from './order.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { ChangeOrderStatusDto, OrderPaginationDto } from './dto';
+import { OrderWithProducts } from './interfaces/orderWithProducts';
 
 @Controller()
 export class OrderController {
   constructor(private readonly orderService: OrderService) {}
 
   @MessagePattern('createOrder')
-  create(@Payload() createOrderDto: CreateOrderDto) {
-    return this.orderService.create(createOrderDto);
+  async create(@Payload() createOrderDto: CreateOrderDto) {
+    const order: OrderWithProducts =
+      await this.orderService.create(createOrderDto);
+
+    const paymentSession = await this.orderService.createPaymentSession(order);
+
+    return { order, paymentSession };
   }
 
   @MessagePattern('findAllOrder')
