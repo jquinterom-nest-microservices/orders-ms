@@ -21,6 +21,8 @@ async function bootstrap() {
 
   await app.listen();
 
+  logger.log(`[NATS] Connected to ${envs.natsServers.join(', ')}`);
+
   logger.log(`🚀 Microservice is running on: http://localhost:${envs.port}`);
 }
 bootstrap();
